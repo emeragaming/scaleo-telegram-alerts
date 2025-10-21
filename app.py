@@ -1,20 +1,54 @@
+from flask import Flask, request
+import os
+import pytz
+import requests
+from datetime import datetime
+
+app = Flask(__name__)  # <-- garante que o 'app' existe
+
+BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
+WEBHOOK_TOKEN = os.environ.get("WEBHOOK_TOKEN", "meusegredo123")
+
+def tg_send(text: str):
+    if not BOT_TOKEN or not CHAT_ID:
+        return
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    requests.post(
+        url,
+        json={
+            "chat_id": CHAT_ID,
+            "text": text,
+            "parse_mode": "Markdown",
+            "disable_web_page_preview": True,
+        },
+        timeout=10,
+    )
+
+@app.route("/")
+def index():
+    return "OK", 200
+
+@app.route("/test")
+def test():
+    msg = request.args.get("msg", "Teste ok ✅")
+    tg_send(msg)
+    return "Sent", 200
+
+# ===== WEBHOOK EM MODO DEBUG =====
 @app.route("/webhook/scaleo", methods=["POST"])
 def webhook_scaleo():
-    # ✅ Confere o token na query (garante que é EXACTAMENTE o mesmo que puseste no Render)
+    # validação simples por token na query: ...?token=meusegredo123
     token = request.args.get("token")
     if token != WEBHOOK_TOKEN:
         print("Webhook refused: bad token", token)
         return "Unauthorized", 403
 
-    # 🔎 Recolhe o bruto + headers para sabermos o que o Scaleo está a enviar
+    # capturar tudo para diagnóstico
     raw_body = request.get_data(as_text=True) or ""
     headers = dict(request.headers)
     form = request.form.to_dict(flat=True)
-    json_body = None
-    try:
-        json_body = request.get_json(silent=True)
-    except Exception:
-        json_body = None
+    json_body = request.get_json(silent=True)
 
     print("=== SCALEO WEBHOOK HIT ===")
     print("Headers:", headers)
@@ -22,21 +56,21 @@ def webhook_scaleo():
     print("Form:", form)
     print("JSON:", json_body)
 
-    # Envia um ping mínimo ao Telegram só para confirmar recepção
+    # ping de debug para o Telegram
     try:
         tg_send("🔔 Webhook recebido do Scaleo (debug).")
     except Exception as e:
         print("Telegram error on debug ping:", e)
 
-    # Tenta normalizar dados, aceitando JSON ou form
+    # normalizar dados (JSON > form)
     data = json_body if isinstance(json_body, dict) else form
 
     def pick(*paths, default="N/A"):
         d = data or {}
-        for p in paths:
+        for path in paths:
             cur = d
             ok = True
-            for k in p:
+            for k in path:
                 if isinstance(cur, dict) and k in cur:
                     cur = cur[k]
                 else:
@@ -46,22 +80,20 @@ def webhook_scaleo():
                 return cur
         return default
 
-    offer_name    = pick(("offer","title"), ("offer_title",), ("offer_id",))
-    affiliate_name= pick(("affiliate","company"), ("affiliate_name",), ("affiliate_id",))
-    goal_title    = pick(("goal","title"), ("goal_title",), default="CPA")
-    click_id      = pick(("click","id"), ("click_id",), ("clickid",))
-    fraud_score   = pick(("fraud","score"), ("fraud_score",))
-    ip_addr       = pick(("visitor","ip"), ("ip",))
-    geo           = pick(("location","country"), ("geo",))
-    device_type   = pick(("device","type"), ("device_type",))
-    device_os     = pick(("device","os"), ("device_os",))
-    lang          = pick(("visitor","language"), ("language",))
-    conn          = pick(("connection","type"), ("connection_type",))
-    carrier       = pick(("mobile_operator",), ("carrier",))
+    offer_name     = pick(("offer","title"), ("offer_title",), ("offer_id",))
+    affiliate_name = pick(("affiliate","company"), ("affiliate_name",), ("affiliate_id",))
+    goal_title     = pick(("goal","title"), ("goal_title",), default="CPA")
+    click_id       = pick(("click","id"), ("click_id",), ("clickid",))
+    fraud_score    = pick(("fraud","score"), ("fraud_score",))
+    ip_addr        = pick(("visitor","ip"), ("ip",))
+    geo            = pick(("location","country"), ("geo",))
+    device_type    = pick(("device","type"), ("device_type",))
+    device_os      = pick(("device","os"), ("device_os",))
+    lang           = pick(("visitor","language"), ("language",))
+    conn           = pick(("connection","type"), ("connection_type",))
+    carrier        = pick(("mobile_operator",), ("carrier",))
 
-    # Hora Europe/Malta
-    import pytz
-    from datetime import datetime
+    # hora Europe/Malta
     mt = pytz.timezone("Europe/Malta")
     mt_time = datetime.now(mt).strftime("%Y-%m-%d %H:%M")
 
